@@ -764,22 +764,20 @@ dialog.addEventListener('click', (e) => {
 });
 
 // ---------------------------------------------------------------- start
-function boot() {
+function loadSharedDesign() {
   const m = location.hash.match(/^#d=([A-Za-z0-9_-]+)/);
-  if (m) {
-    const d = decodeDesign(m[1]);
-    history.replaceState(null, '', location.pathname);
-    if (d) {
-      app.design = d; app.difficulty = d.difficulty; app.tab = 'planner';
-      go('design');
-      toast('Shared design loaded. Check it, then fly it.');
-      return;
-    }
-    toast('That share link could not be read.');
-  }
-  go('home');
+  if (!m) return false;
+  const d = decodeDesign(m[1]);
+  history.replaceState(null, '', location.pathname);
+  if (!d) { toast('That share link could not be read.'); return false; }
+  if (dialog.open) dialog.close();
+  app.design = d; app.difficulty = d.difficulty; app.tab = 'planner'; app.signoff = {};
+  go('design');
+  toast('Shared design loaded. Check it, then fly it.');
+  return true;
 }
-boot();
+window.addEventListener('hashchange', loadSharedDesign);
+if (!loadSharedDesign()) go('home');
 
 // Exposed for debugging in the browser console.
 window.__margin = { app, evaluate, powerAt };
