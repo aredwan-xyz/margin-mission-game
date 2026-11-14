@@ -6,6 +6,8 @@ import {
 import { createMission, randomSeed } from './sim.js';
 import { craftSvg, destinationSvg } from './craft.js';
 import { createViz } from './viz.js';
+import { sfx, soundOn, setSound } from './sfx.js';
+import { BADGES, earnedBadges, badgeSvg, patchSvg, downloadSvg, downloadPng } from './reward.js';
 
 // ---------------------------------------------------------------- state
 const app = {
@@ -27,6 +29,9 @@ const store = {
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* storage may be blocked */ } },
 };
 const SCORE_KEY = 'margin.scores.v1';
+const BADGE_KEY = 'margin.badges.v1';
+const WORLD_KEY = 'margin.worlds.v1';
+const FX = { debris: 'debris', fireSeason: 'fire', eclipse: 'eclipse', dustStorm: 'dust', conjunction: 'conjunction', radiation: 'radiation', plume: 'plume', solarStorm: 'solar', antennaStuck: 'antenna' };
 
 function toast(msg) {
   const t = document.getElementById('toast');
@@ -35,6 +40,7 @@ function toast(msg) {
 }
 
 function go(screen) {
+  app.pulse = null;
   if (app.viz) { app.viz.destroy(); app.viz = null; }
   if (screen !== 'sim') app.runId++;
   app.screen = screen;
@@ -54,6 +60,21 @@ function render() {
   const screens = { home, team, missions, design, review, sim, debrief };
   root.innerHTML = screens[app.screen]();
   if (app.screen === 'sim') startSim();
+  if (app.screen === 'debrief' && !app.counted) countUp();
+}
+
+function countUp() {
+  app.counted = true;
+  const el = document.getElementById('total');
+  const total = Number(el?.dataset.total);
+  if (!el || !total || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const t0 = performance.now();
+  const step = (now) => {
+    const k = Math.min(1, (now - t0) / 1400);
+    el.textContent = Math.round(total * (1 - (1 - k) ** 3)).toLocaleString('en-US');
+    if (k < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
 }
 
 const logo = `<svg viewBox="0 0 32 32" aria-hidden="true"><rect x="10" y="10" width="12" height="12" fill="#d9a441"/><rect x="1" y="14" width="8" height="4" fill="#5fb3ff"/><rect x="23" y="14" width="8" height="4" fill="#5fb3ff"/><path d="M11 9 Q16 4 21 9" fill="none" stroke="#e8edf4" stroke-width="1.6"/></svg>`;
@@ -66,6 +87,7 @@ function topbar(extra = '') {
     ${m ? `<span class="where"><strong>${esc(m.name)}</strong>, ${esc(diff.name)}${app.mode === 'team' && app.team.name ? `, team ${esc(app.team.name)}` : ''}</span>` : ''}
     <span class="spacer"></span>
     ${extra}
+    <button class="btn small ghost" data-act="sound" aria-pressed="${soundOn()}">${soundOn() ? 'Sound on' : 'Sound off'}</button>
     <button class="btn small ghost" data-act="learn">How it works</button>
   </div></header>`;
 }
@@ -95,6 +117,7 @@ function home() {
       </div>
       <div class="home-craft">${craftSvg(lookup(sample), { title: 'A Europa explorer with giant solar wings, a large dish and a radiation vault', hint: false })}</div>
     </div>
+    ${badgeShelf()}
     <div class="home-how">
       <div><span class="stepnum">1</span><h3>Pick a mission</h3><p>From watching wildfires on Earth to exploring the ocean under Europa's ice.</p></div>
       <div><span class="stepnum">2</span><h3>Design it</h3><p>Choose the orbit, rocket, spacecraft, power, instruments and radio. Every gauge updates as you go.</p></div>
@@ -102,6 +125,14 @@ function home() {
       <div><span class="stepnum">4</span><h3>Fly it</h3><p>Launch, cruise and operate. Handle the surprises, then read the mission report.</p></div>
     </div>
   </div></section>`;
+}
+
+function badgeShelf() {
+  const got = store.get(BADGE_KEY, {});
+  const n = Object.keys(got).length;
+  if (!n) return '';
+  return `<section class="shelf" aria-label="Your badges"><h3>Your badges, ${n} of ${BADGES.length}</h3>
+    <ul class="badges">${BADGES.map((b) => `<li class="${got[b.id] ? 'on' : 'off'}" title="${esc(b.name)}: ${esc(b.text)}">${badgeSvg(b.id, !!got[b.id])}<span>${got[b.id] ? esc(b.name) : 'Locked'}</span></li>`).join('')}</ul></section>`;
 }
 
 // ---------------------------------------------------------------- team
@@ -348,7 +379,7 @@ function sheet(s, M) {
   const total = tl.end;
   const seg = (cls, yrs, label) => (yrs > 0.01 ? `<span class="${cls}" style="flex:${yrs}" title="${label}: ${yrs.toFixed(1)} years">${yrs / total > 0.12 ? label : ''}</span>` : '');
   return `<aside class="sheet" id="status" aria-label="Mission status">
-    <div class="sheet-craft">${craftSvg(L, { massLabel: isFinite(ms.launchMass) ? `${kg(ms.launchMass)} at launch` : 'too heavy to launch', redundancy: s.redundancy })}</div>
+    <div class="sheet-craft">${craftSvg(L, { massLabel: isFinite(ms.launchMass) ? `${kg(ms.launchMass)} at launch` : 'too heavy to launch', redundancy: s.redundancy, pulse: app.pulse })}</div>
     <div class="sheet-body">
       <div class="sheet-title"><h3>${esc(L.mission.name)}</h3><span class="objective">${esc(L.objective.name)}, ${esc(L.orbit.name)}</span></div>
       <div class="gauges">
@@ -421,6 +452,8 @@ function sim() {
         <canvas id="viz" aria-label="Animation of the mission" role="img"></canvas>
         <div class="phase-label" id="phase-label">Development</div>
         <div class="clock" id="clock">Year 0.0</div>
+        <div class="banner" id="banner" aria-hidden="true"></div>
+        <div class="countdown" id="countdown" aria-hidden="true"></div>
         <div class="phases" id="phases">${phases.map(([id, label]) => `<span data-phase="${id}">${label}</span>`).join('')}</div>
       </div>
       <dl class="dash">
@@ -475,6 +508,23 @@ async function startSim() {
     }
   };
   const labels = { development: 'Development', launch: 'Launch', cruise: 'Cruise', arrival: 'Arrival', operations: 'Science operations' };
+  const target = { earth: 'orbit', moon: 'the Moon', mars: 'Mars', jupiter: 'Jupiter' }[L.mission.body];
+  const bannerText = { development: 'Building the spacecraft', cruise: `On the way to ${target}`, arrival: L.mission.body === 'earth' ? 'Reaching orbit' : `Arriving at ${target}`, operations: 'Science begins' };
+  const banner = (text) => {
+    const b = document.getElementById('banner'); if (!b) return;
+    b.textContent = text; b.classList.remove('show'); void b.offsetWidth; b.classList.add('show');
+  };
+  const countdown = async () => {
+    const el = document.getElementById('countdown');
+    if (!el || app.skipping) return;
+    for (const n of ['3', '2', '1', 'Liftoff']) {
+      if (!alive()) return;
+      el.textContent = n; el.classList.remove('show'); void el.offsetWidth; el.classList.add('show');
+      if (n === 'Liftoff') sfx.liftoff(); else sfx.count();
+      await delay(650);
+    }
+    el.textContent = '';
+  };
 
   let r = mission.next();
   while (!r.done) {
@@ -485,20 +535,27 @@ async function startSim() {
       const order = [...document.querySelectorAll('#phases span')].map((x) => x.dataset.phase);
       const idx = order.indexOf(v.phase);
       document.querySelectorAll('#phases span').forEach((el, i) => { el.className = i < idx ? 'done' : i === idx ? 'now' : ''; });
+      if (bannerText[v.phase]) banner(bannerText[v.phase]);
       if (v.phase === 'development') await animate(1400, 'development');
-      if (v.phase === 'launch') { app.viz.set({ scene: 'launch', progress: 0 }); await animate(2200, 'launch'); }
+      if (v.phase === 'launch') { app.viz.set({ scene: 'launch', progress: 0 }); await countdown(); await animate(2600, 'launch'); }
       if (v.phase === 'cruise') { app.viz.set({ scene: 'cruise', progress: 0 }); await animate(2600, 'cruise'); }
       if (v.phase === 'arrival' || v.phase === 'operations') app.viz.set({ scene: 'orbit' });
       r = mission.next();
     } else if (v.type === 'log') {
       addLog(v.text, v.tone, v.fact, v.t);
       dash();
+      if (v.tone === 'good') sfx.ping();
+      if (v.tone === 'bad') sfx.bad();
       if (live.lost) app.viz.set({ lost: true });
       await delay(v.tone === 'bad' ? 1800 : 1100);
       r = mission.next();
     } else {
       dash();
       app.skipping = false;
+      if (FX[v.id]) app.viz.set({ fx: FX[v.id] });
+      sfx.alert();
+      await wait(matchMedia('(prefers-reduced-motion: reduce)').matches || app.skipping ? 0 : 900);
+      if (!alive()) return;
       const choice = await askDecision(v);
       if (!alive()) return;
       const opt = v.options.find((o) => o.id === choice);
@@ -513,9 +570,13 @@ async function startSim() {
   dash();
   app.report = r.value;
   app.saved = false;
-  app.viz.set({ scene: 'end', lost: live.lost });
+  app.counted = false;
+  app.viz.set({ done: true, lost: live.lost });
   document.getElementById('phase-label').textContent = live.lost ? 'Contact lost' : 'Mission complete';
-  await wait(1400);
+  banner(live.lost ? 'Contact lost' : app.report.outcome === 'success' ? 'Mission complete' : 'Mission over');
+  if (app.report.outcome === 'success') sfx.success(); else sfx.fail();
+  recordRewards();
+  await wait(2200);
   if (alive()) go('debrief');
 }
 
@@ -543,6 +604,30 @@ function askDecision(d) {
     dialog.addEventListener('cancel', onCancel);
     dialog.showModal();
     dialog.querySelector('.choice:not(:disabled)')?.focus();
+  });
+}
+
+// ---------------------------------------------------------------- rewards
+function recordRewards() {
+  const rep = app.report;
+  const worlds = new Set(store.get(WORLD_KEY, []));
+  if (rep.outcome === 'success' && rep.scored) worlds.add(app.design.missionId);
+  store.set(WORLD_KEY, [...worlds]);
+  const M = evaluate(app.design);
+  const earned = rep.scored ? earnedBadges(rep, app.design, M, worlds) : [];
+  const got = store.get(BADGE_KEY, {});
+  app.newBadges = earned.filter((b) => !got[b.id]).map((b) => b.id);
+  app.earnedBadges = earned.map((b) => b.id);
+  for (const b of earned) if (!got[b.id]) got[b.id] = new Date().toISOString().slice(0, 10);
+  store.set(BADGE_KEY, got);
+}
+
+function currentPatch() {
+  const L = lookup(app.design);
+  const rep = app.report;
+  return patchSvg({
+    missionName: L.mission.name, body: L.mission.body, objective: L.objective.name,
+    team: app.mode === 'team' ? app.team.name : '', stars: rep.stars, success: rep.outcome === 'success',
   });
 }
 
@@ -577,6 +662,19 @@ function debrief() {
       <div class="stars" aria-label="${rep.stars} of 3 stars">${[1, 2, 3].map((i) => starSvg(i <= rep.stars)).join('')}</div>
       <p>${esc(why)} ${rep.disposal.text ? esc(rep.disposal.text) : ''}</p>
     </section>
+    <section class="patch-row">
+      <div class="patch">${currentPatch()}</div>
+      <div class="patch-side">
+        <h3>Your mission patch</h3>
+        <p class="role-tag">Every real mission has one. Download it, print it, share it.</p>
+        <div class="actions no-print" style="margin-top:12px">
+          <button class="btn small" data-act="patch-png">Download PNG</button>
+          <button class="btn small" data-act="patch-svg">Download SVG</button>
+        </div>
+        ${(app.earnedBadges || []).length ? `<h3 style="margin-top:20px">Badges from this flight</h3>
+        <ul class="badges">${app.earnedBadges.map((id) => { const b = BADGES.find((x) => x.id === id); return `<li class="on ${app.newBadges.includes(id) ? 'new' : ''}" title="${esc(b.text)}">${badgeSvg(id)}<span>${esc(b.name)}${app.newBadges.includes(id) ? '<em>New</em>' : ''}</span></li>`; }).join('')}</ul>` : ''}
+      </div>
+    </section>
     <div class="debrief">
       <div>
         <section class="panel">
@@ -595,7 +693,7 @@ function debrief() {
           <table class="score-table"><tbody>
             ${rows.map(([a, b, n]) => `<tr><td>${a}<br><span class="role-tag">${esc(b)}</span></td><td>${n > 0 ? '+' : ''}${n}</td></tr>`).join('')}
             <tr><td>Difficulty</td><td>× ${diff.scoreMult}</td></tr>
-            <tr class="total"><td>Total</td><td>${rep.scored ? rep.total.toLocaleString('en-US') : 'not scored'}</td></tr>
+            <tr class="total"><td>Total</td><td id="total" data-total="${rep.scored ? rep.total : ''}">${rep.scored ? rep.total.toLocaleString('en-US') : 'not scored'}</td></tr>
           </tbody></table>
         </section>
         <section class="panel">
@@ -661,10 +759,20 @@ function learn() {
 }
 
 // ---------------------------------------------------------------- events
-function setDesign(next, focusSel) {
+const PULSE = { bus: 'bus', power: 'power', battery: null, propulsion: 'propulsion', shielding: 'shielding', antenna: 'antenna', instruments: 'instruments', redundancy: 'redundancy' };
+
+function setDesign(next, focusSel, cat) {
   const [clean, notes] = sanitize(next);
+  const before = Object.fromEntries(evaluate(app.design).checks.map((c) => [c.id, c.level]));
+  const afterChecks = evaluate(clean).checks;
   app.design = clean;
+  app.pulse = PULSE[cat] || null;
+  const worse = afterChecks.find((c) => c.level === 'fail' && before[c.id] !== 'fail');
+  const fixed = afterChecks.find((c) => c.level === 'ok' && before[c.id] && before[c.id] !== 'ok');
   if (notes.length) toast(notes[0]);
+  else if (worse) { toast(`New problem: ${worse.title}`); sfx.bad(); }
+  else if (fixed) { toast(`Fixed: ${fixed.title}`); sfx.good(); }
+  else sfx.click();
   const y = window.scrollY;
   render();
   window.scrollTo(0, y);
@@ -706,7 +814,7 @@ root.addEventListener('click', (e) => {
     else if (cat === 'redundancy') s.redundancy = !s.redundancy;
     else s[CATEGORIES[cat].key] = id;
     app.signoff = {};
-    setDesign(s, focusSel);
+    setDesign(s, focusSel, cat);
     return;
   }
   const act = t.dataset.act;
@@ -720,6 +828,16 @@ root.addEventListener('click', (e) => {
   }
   if (act === 'missions') go('missions');
   if (act === 'learn') learn();
+  if (act === 'sound') {
+    setSound(!soundOn());
+    t.setAttribute('aria-pressed', soundOn()); t.textContent = soundOn() ? 'Sound on' : 'Sound off';
+    if (soundOn()) sfx.good();
+  }
+  if (act === 'patch-svg' || act === 'patch-png') {
+    const svg = currentPatch();
+    const name = `margin-${app.design.missionId}-patch`;
+    if (act === 'patch-svg') downloadSvg(svg, name); else downloadPng(svg, name);
+  }
   if (act === 'share') shareLink();
   if (act === 'review') go('review');
   if (act === 'design') go('design');

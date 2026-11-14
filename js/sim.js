@@ -51,7 +51,7 @@ function decision(ctx, id, role, title, text, options, fact = null) {
 
 function recordChoice(ctx, d, choiceId) {
   const opt = d.options.find((o) => o.id === choiceId && !o.disabled) || d.options.find((o) => !o.disabled);
-  ctx.live.events.push({ id: d.id, role: d.role, title: d.title, choice: opt.label });
+  ctx.live.events.push({ id: d.id, role: d.role, title: d.title, choice: opt.label, t: d.t });
   return opt.id;
 }
 
@@ -234,7 +234,7 @@ function* run(ctx) {
   let y = 0;
   while (y < live.opsYears) {
     y += 1;
-    const mods = { yearBonus: 0, imagingMult: 1, dataProdMult: 1 };
+    const mods = { yearBonus: y > L.mission.opsYears ? -0.5 : 0, imagingMult: 1, dataProdMult: 1 };
     let radThisYear = live.radMult;
 
     if (L.prop.isp === 0 && L.orbit.noEngine === 'decay' && y >= 2) {
@@ -291,9 +291,9 @@ function* run(ctx) {
 
     if (y === live.opsYears && !live.lost) {
       const cost = round1(L.bus.opsPerYear + L.ground.costPerYear);
-      if (live.extended < 2 && workingInstruments(ctx).length) {
+      if (live.extended < 1 && workingInstruments(ctx).length) {
         const d = decision(ctx, 'extension', 'planner', y === L.mission.opsYears ? 'Planned mission complete!' : 'Another year done',
-          `The spacecraft is still healthy. Running it for another year costs ${fmtMoney(cost)}. You have ${fmtMoney(live.reserve)} left.`,
+          `The spacecraft is still healthy. Another year costs ${fmtMoney(cost)} and, with ageing instruments and a smaller team, returns about half a normal year's science. You have ${fmtMoney(live.reserve)} left.`,
           [
             { id: 'extend', label: `Extend for one more year (${fmtMoney(cost)})`, detail: 'More science, more risk, less money left.',
               disabled: live.reserve < cost, reason: 'Not enough money left.' },
@@ -340,7 +340,7 @@ function* missionEvent(ctx, ev, mods) {
       ], D.FACTS.fires);
     const choice = recordChoice(ctx, d, yield d);
     if (choice === 'focus') {
-      mods.dataProdMult = 1.5; mods.yearBonus += has('thermal') ? 0.6 : 0.15;
+      mods.dataProdMult = 1.5; mods.yearBonus += has('thermal') ? 0.35 : 0.1;
       yield log(ctx, has('thermal') ? 'The thermal imager tracked fire fronts hour by hour. Fire crews used the maps.' : 'Without a thermal imager, smoke hid most of the fires.', has('thermal') ? 'good' : 'warn');
     } else {
       mods.yearBonus += L.objective.id === 'map' ? 0.15 : 0;
@@ -399,7 +399,7 @@ function* missionEvent(ctx, ev, mods) {
       ]);
     const choice = recordChoice(ctx, d, yield d);
     if (choice === 'study') {
-      mods.dataProdMult = 1.3; mods.yearBonus += watchers ? (L.objective.id === 'weather' ? 0.5 : 0.2) : 0.05;
+      mods.dataProdMult = 1.3; mods.yearBonus += watchers ? (L.objective.id === 'weather' ? 0.3 : 0.15) : 0.05;
       yield log(ctx, watchers ? 'Your instruments followed the storm from start to finish. Forecasters were thrilled.' : 'Without the right instruments there was little to see.', watchers ? 'good' : 'warn');
     } else {
       mods.imagingMult = 0.5;
@@ -442,7 +442,7 @@ function* missionEvent(ctx, ev, mods) {
       ], D.FACTS.plume);
     const choice = recordChoice(ctx, d, yield d);
     if (choice === 'dive') {
-      mods.yearBonus += samplers ? 0.6 : 0.15;
+      mods.yearBonus += samplers ? 0.35 : 0.1;
       yield log(ctx, samplers ? 'The spacecraft flew through the plume and measured salts and water from the ocean below!' : 'The flyby went through the plume, but no instrument could sample it.', samplers ? 'good' : 'warn');
       return { radThisYear: 1.3 };
     }
@@ -532,7 +532,7 @@ export function finish(ctx) {
   return {
     outcome, ratio, science: live.science, target, lost: live.lost, lossReason: live.lossReason, lossCause: live.lossCause,
     points, total, stars, goals, dataShare, reserve: live.reserve, budget, disposal,
-    yearsFlown: live.yearsFlown, extended: live.extended, events: live.events, log: live.log,
+    yearsFlown: live.yearsFlown, extended: live.extended, events: live.events, log: live.log, redundancyUsed: live.redundancyUsed,
     lessons: lessons(ctx, { ratio, dataShare, disposal }), seed: ctx.seed, scored: diff.scoreMult > 0,
   };
 }

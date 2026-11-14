@@ -38,9 +38,13 @@ challenge *Space Mission Design Game*.
    - a stuck antenna
    - a possible water plume at Europa
    - whether to extend the mission
-5. **Read the report.** You get the outcome, a score breakdown, which role goals were met,
+5. **Celebrate (or learn).** A launch countdown, rocket staging, and an animated view of the
+   spacecraft at work, with effects for each event (dust storms, solar storms, debris,
+   eclipses, plumes). Sound effects are optional.
+6. **Read the report.** You get the outcome, a score breakdown, which role goals were met,
    and plain-language lessons tied to what actually happened, each with a true story from a
-   real mission.
+   real mission. Every flight earns a printable mission patch, and 16 badges reward
+   different ways of playing, from saving money to surviving on a CubeSat.
 
 ## How it answers the challenge
 
